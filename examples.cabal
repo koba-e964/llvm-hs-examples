@@ -52,3 +52,19 @@ executable arith
     recursion-schemes,
     text,
     transformers
+
+executable bf
+  Main-is:              BF.hs
+  hs-source-dirs:       bf
+  build-depends:
+    base               >= 4.7,
+    mtl                >= 2.2,
+    bytestring         >= 0.10,
+    containers,
+    llvm-hs            >= 5.1.2,
+    llvm-hs-pure       >= 5.1,
+    llvm-hs-pretty,
+    deepseq,
+    recursion-schemes,
+    text,
+    transformers
