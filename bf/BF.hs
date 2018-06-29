@@ -40,26 +40,14 @@ import qualified LLVM.Target                as LLVMJIT
 
 -- * Core expression type
 
--- | An expression will be any value of type @'Fix' 'ExprF'@, which
---   has as values arbitrarily nested applications of constructors from
---   'ExprF'. This is equivalent to just having an 'Expr type with no type
---   parameter and all @a@s replaced by 'Expr', but the 'Functor' and 'Foldable'
---   instances are quite handy, especially combined with the /recursion-schemes/
---   library.
---
---   This type allows us to express the body of a @Double -> Double@ function,
---   where 'Var' allows us to refer to the (only) argument of the function.
-data ExprF a
-  = Right
-  | Left
+data Expr
+  = MRight
+  | MLeft
   | Inc
   | Dec
   | Output
   | Input
-  | Bracket a
-  deriving (Functor, Foldable, Traversable)
-
-type Expr = Fix ExprF
+  | Bracket [Expr]
 
 -- * Helpers for building expressions
 
@@ -107,24 +95,50 @@ declarePrimitives = fmap Map.fromList $ do
 --   including @declare@ statements for the intrinsics and
 --   a function, always called @f@, that will perform the copoutations
 --   described by the 'Expr'ession.
-codegen :: Expr -> LLVM.Module
+codegen :: [Expr] -> LLVM.Module
 codegen fexpr = LLVMIR.buildModule "arith.ll" $ do
   prims <- declarePrimitives
-  _ <- LLVMIR.function "main" [(LLVM.double, xparam)] LLVM.void $ \[arg] -> do
+  _ <- LLVMIR.function "main" [] LLVM.i32 $ \[] -> do
     dat <- LLVMIR.alloca LLVM.i8 (Just $ LLVM.ConstantOperand (LLVM.Int 32 0x10000)) 1 `LLVMIR.named` "dat"
     pos <- LLVMIR.alloca LLVM.i32 Nothing 0 `LLVMIR.named` "pos"
     LLVMIR.store pos 0 (LLVM.ConstantOperand $ LLVM.Int 32 0x8000)
-    cataM (alg dat pos) fexpr
+    mapM_ (alg dat pos prims) fexpr
+    _ <- LLVMIR.ret $ LLVM.ConstantOperand $ LLVM.Int 32 0
+    return ()
   return ()
 
-  where alg dat pos Inc = do
+  where alg dat pos _ Inc = do
           idx <- LLVMIR.load pos 0
           ptr <- LLVMIR.gep dat [idx]
           val <- LLVMIR.load ptr 0
-          newVal <- LLVMIR.add val (LLVM.ConstantOperand $ LLVM.Int 8 0)
+          newVal <- LLVMIR.add val (LLVM.ConstantOperand $ LLVM.Int 8 1)
           LLVMIR.store ptr 0 newVal
           return ()
-        {-
+        alg dat pos _ Dec = do
+          idx <- LLVMIR.load pos 0
+          ptr <- LLVMIR.gep dat [idx]
+          val <- LLVMIR.load ptr 0
+          newVal <- LLVMIR.add val (LLVM.ConstantOperand $ LLVM.Int 8 (-1))
+          LLVMIR.store ptr 0 newVal
+          return ()
+        alg dat pos _ MRight = do
+          idx <- LLVMIR.load pos 0
+          newIdx <- LLVMIR.add idx (LLVM.ConstantOperand $ LLVM.Int 32 1)
+          LLVMIR.store pos 0 newIdx
+          return ()
+        alg dat pos _ MLeft = do
+          idx <- LLVMIR.load pos 0
+          newIdx <- LLVMIR.add idx (LLVM.ConstantOperand $ LLVM.Int 32 (-1))
+          LLVMIR.store pos 0 newIdx
+          return ()
+        alg dat pos ps Output = do
+          idx <- LLVMIR.load pos 0
+          ptr <- LLVMIR.gep dat [idx]
+          val <- LLVMIR.load ptr 0
+          _ <- LLVMIR.call (ps Map.! "puts") [(ptr, [])] -- This is apparantly wrong!
+          return ()
+
+          {-
         alg arg ps (Output a) = do
           ptr <- LLVMIR.alloca LLVM.i8 (Just $ LLVM.ConstantOperand (LLVM.Int 32 10)) 4
           LLVMIR.store ptr 4 (LLVM.ConstantOperand $ LLVM.Int 8 0x61)
@@ -133,10 +147,10 @@ codegen fexpr = LLVMIR.buildModule "arith.ll" $ do
           return a
         -}
 
-codegenText :: Expr -> Text
+codegenText :: [Expr] -> Text
 codegenText = LLVMPretty.ppllvm . codegen
 
-printCodegen :: Expr -> IO ()
+printCodegen :: [Expr] -> IO ()
 printCodegen = Text.putStrLn . codegenText
 
 -- * JIT compilation & loading
@@ -162,7 +176,7 @@ printIR = liftIO . BS.putStrLn . ("\n*** LLVM IR ***\n\n"<>)
 
 -- | JIT-compile the given 'Expr'ession and use the resulting function.
 withSimpleJIT
-  :: Expr
+  :: [Expr]
   -> IO ()
 withSimpleJIT expr = do
   -- LLVMJIT.loadLibraryPermanently (Just "/usr/lib/libc++.dylib")
@@ -187,8 +201,8 @@ cataM alg = c where
 
 -- * Main
 
-e :: Expr
-e = Fix (Inc)
+e :: [Expr]
+e = [Inc, Dec, MRight, Main.MLeft] ++ [Inc | _ <- [1 .. 0x48]] ++ [Output]
 
 main :: IO ()
 main = do
