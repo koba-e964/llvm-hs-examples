@@ -17,6 +17,8 @@ import Data.Foldable
 import Data.Functor.Foldable hiding (fold)
 import Data.Map.Strict (Map)
 import Data.Monoid
+import Data.Word
+import Data.Char
 import Data.Text.Lazy (Text)
 import Foreign.Ptr
 
@@ -201,12 +203,20 @@ cataM alg = c where
 
 -- * Main
 
-e :: [Expr]
-e = [Inc, Dec, MRight, Main.MLeft] ++ [Inc | _ <- [1 .. 0x48]] ++ [Output]
+translate :: Char -> Expr
+translate '+' = Inc
+translate '-' = Dec
+translate '>' = MRight
+translate '<' = MLeft
+translate '.' = Output
+translate ',' = Input
+translate x = Inc
 
 main :: IO ()
 main = do
   content <- BS.readFile "input.txt"
   BS.putStrLn content
+  let len = BS.length content
+  let e = map (\idx -> translate (content `BS.index` idx)) [0 .. (len - 1)]
   withSimpleJIT e
   return ()
